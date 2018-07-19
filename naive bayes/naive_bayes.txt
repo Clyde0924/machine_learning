@@ -19,12 +19,12 @@ data p1_vect type table of tp_pack.
 data p0_vect type table of tp_pack.
 data p_abusive type tp_pack.
 
+parameters input type string default 'stupid garbage' lower case.
+
 perform load_dataset.
 perform create_vocablist.
 perform convert2matrix using posting_list train_mat.
 perform train_nb0.
-
-parameters input type string default 'stupid garbage' lower case.
 perform test_nb.
 
 form load_dataset .
