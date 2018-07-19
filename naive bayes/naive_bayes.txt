@@ -1,1 +1,165 @@
+********author: Yin Chuanlang*******************
+********created on: 2018-07-18******************
+********language: SAP ABAP**********************
+********version: Initial draft******************
+* P(A,B)=P(A)P(B|A)=P(B)P(A|B) -->             *
+* P(B|A)=P(A|B)P(B)/P(A)       -->             *
+* P(c|x,y)=P(x,y|c)p(c)/p(x,y)                 *
+report ycl_naive_bayes no standard page heading.
 
+constants cnt_1 value 1.
+types tp_pack type p length 16 decimals 10.
+types tp_c100 type c length 100.
+
+data posting_list type table of tp_c100.
+data class_list type table of n.
+data vocab_set type table of tp_c100.
+data train_mat like table of class_list.
+data p1_vect type table of tp_pack.
+data p0_vect type table of tp_pack.
+data p_abusive type tp_pack.
+
+perform load_dataset.
+perform create_vocablist.
+perform convert2matrix using posting_list train_mat.
+perform train_nb0.
+
+parameters input type string default 'stupid garbage' lower case.
+perform test_nb.
+
+form load_dataset .
+  append 'My dog has flea  problems, help please' to posting_list. append 0 to class_list.
+  append 'Maybe not take him to dog park stupid' to posting_list.  append 1 to class_list.
+  append 'My dalmation is so cute, I love him' to posting_list.    append 0 to class_list.
+  append 'Stop posting stupid worthless garbage' to posting_list.  append 1 to class_list.
+  append 'MR licks ate my steak,how to stop him?' to posting_list. append 0 to class_list.
+  append 'Quit buying worthless dog food stupid' to posting_list.  append 1 to class_list.
+endform.
+
+form create_vocablist.
+  replace all occurrences of regex '[^A-z^0-9]' in table posting_list with '^'.
+  loop at posting_list into data(line).
+    split line at '^' into table data(itab).
+    delete itab where table_line = ''.
+    loop at itab into data(wa).
+      translate wa to upper case.
+      read table vocab_set into data(wa2) with key table_line = wa.
+      if sy-subrc = 4.
+        append wa to vocab_set.
+      endif.
+    endloop.
+  endloop.
+  sort vocab_set.
+endform.
+
+form set_of_words2vec using input_set type table return_vec type table.
+  clear return_vec.
+  describe table vocab_set lines data(lv_len).
+  do lv_len times.
+    append 0 to return_vec.
+  enddo.
+
+  loop at input_set assigning field-symbol(<fs>).
+    translate <fs> to upper case.
+    read table vocab_set into data(wa) with key table_line = <fs>.
+    if sy-subrc = 0.
+      modify return_vec from cnt_1 index sy-tabix.
+    endif.
+  endloop.
+endform.
+
+form convert2matrix using list type table matrix type table.
+  data return_vec type table of n.
+  replace all occurrences of regex '[^A-z^0-9]' in table list with '^'.
+  loop at list assigning field-symbol(<fs>).
+    split <fs> at '^' into table data(itab).
+    delete itab where table_line = ''.
+    perform set_of_words2vec changing itab return_vec.
+    append return_vec to matrix.
+  endloop.
+endform.
+
+form train_nb0.
+  describe table train_mat lines data(num_train_docs).
+  describe table vocab_set lines data(num_words).
+
+  data sum_abusive type i.
+  loop at class_list into data(class).
+    sum_abusive = sum_abusive + class.
+  endloop.
+
+  p_abusive = sum_abusive / num_train_docs.
+
+  data p1_num type table of n.
+  do num_words times.
+    append cnt_1 to p1_num.
+  enddo.
+
+  data(p0_num) = p1_num.
+
+  data p0_denom type tp_pack value '2.0'.
+  data p1_denom type tp_pack value '2.0'.
+
+  do num_train_docs times.
+    read table class_list into data(cl) index sy-index.
+    read table train_mat into data(vec) index sy-index.
+
+    if cl = 1.
+      loop at p1_num assigning field-symbol(<fs>).
+        read table vec into data(val) index sy-tabix.
+        <fs> = <fs> + val.
+        p1_denom = p1_denom + val.
+      endloop.
+
+    else.
+      loop at p0_num assigning field-symbol(<fs2>).
+        read table vec into data(val2) index sy-tabix.
+        <fs2> = <fs2> + val2.
+        p0_denom = p0_denom + val2.
+      endloop.
+    endif.
+  enddo.
+
+  loop at p1_num into data(count).
+    append log( count / p1_denom ) to p1_vect.
+  endloop.
+
+  loop at p0_num into data(count2).
+    append log( count2 / p0_denom ) to p0_vect.
+  endloop.
+endform.
+
+form classify_nb using it_vec type table e_class type n.
+  data p1 type tp_pack.
+  data p0 type tp_pack.
+
+  loop at p1_vect into data(prob_i).
+    read table it_vec assigning field-symbol(<fs>) index sy-tabix.
+    p1 = p1 + <fs> * prob_i.
+  endloop.
+  p1 = p1 + log( p_abusive ).
+
+  loop at p0_vect into data(prob_i2).
+    read table it_vec assigning field-symbol(<fs2>) index sy-tabix.
+    p0 = p0 + <fs2> * prob_i2.
+  endloop.
+  p0 = p0 + log( 1 - p_abusive ).
+
+  if p1 > p0.
+    e_class = 1.
+  else.
+    e_class = 0.
+  endif.
+endform.
+
+form test_nb.
+  data test_entry like posting_list.
+  data test_matrix like train_mat.
+  data prob type n.
+
+  append input to test_entry.
+  perform convert2matrix using test_entry test_matrix.
+  read table test_matrix into data(wa) index 1.
+  perform classify_nb using wa prob.
+  write: 'posings:',input, /, 'predict: class ', prob.
+endform.
